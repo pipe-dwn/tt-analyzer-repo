@@ -69,4 +69,8 @@ Minimal bugs on Chrome, Edge, Safari (desktop + iPhone).
 0. /debug/candles endpoint that fetches underlying and option-leg candles for a
    spread I specify, and prints what exists, depth, and gaps.
 1. Snapshot Worker (~5 min, market hours, Central) + D1 schema.
-2. Transaction sync and spread matching; I verify P&L against
+2. Transaction sync and spread matching; I verify P&L against Tastytrade.
+3. Dashboard.
+4. AI summaries (Anthropic API + web search): entry setup, path, backdrop, exit,
+   confidence. Sources required; no causal claims that can't be time-aligned.
+Deferred: iPhone Home Screen install.
