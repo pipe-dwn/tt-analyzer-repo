@@ -1,76 +1,79 @@
-# Trade Journal: Project Brief
+# Tastytrade MCP Connector: Project Brief
 
 ## Purpose
-Private, read-only web app that auto-logs my Tastytrade trades (mainly 2-4 DTE
-credit spreads) and explains WHY each trade performed as it did. It never places
-trades and never feeds entry decisions.
+A private, read-only remote MCP server that lets me (in Claude chat) pull my
+Tastytrade data on demand and analyze WHY my trades (mainly 2-4 DTE credit
+spreads) performed as they did. It never places, modifies, or cancels orders.
+No web frontend. Claude does the analysis; this server only supplies data.
 
 ## Environment (IMPORTANT)
-- No local environment. You work in a cloud sandbox and push to GitHub; Cloudflare
-  Workers Builds auto-deploys from `main`. You cannot run Wrangler, reach
-  Tastytrade, or see my secrets.
-- I create the D1 database and set secrets in the Cloudflare dashboard. Tell me
-  exact names and steps; never ask me to paste secrets into chat.
-- Single Worker serves both API and static frontend (Workers static assets).
-  Bindings and cron triggers are declared in the repo's Wrangler config.
-- Schema changes: put SQL in /migrations; I run it in the D1 console. Tell me
-  exactly what to paste and in what order.
-- Debug loop: build a /debug page FIRST showing raw API responses, errors, and
-  last-run status, so I can relay what happened. Verify with unit tests against
-  recorded fixtures wherever possible, since you can't call live APIs.
-- Never expose real trade data on a public URL: /debug and all data routes must
-  sit behind Cloudflare Access before production credentials are added.
+- No local environment. You work in a cloud sandbox and push to GitHub;
+  Cloudflare Workers Builds auto-deploys from `main`. You cannot run Wrangler,
+  reach Tastytrade, or see my secrets.
+- I create the Worker, KV namespace (OAUTH_KV), and secrets in the Cloudflare
+  dashboard. Tell me exact names and steps; never ask me to paste secrets in chat.
+- Bindings and any cron triggers are declared in the repo's Wrangler config.
+- Since you can't call live APIs, verify with unit tests against recorded
+  fixtures, and give me a /debug route (behind the same auth) that shows raw
+  API responses, errors, and timestamps in copy-friendly form so I can relay
+  results back to you.
 
 ## Stack
-Cloudflare Workers (cron + API) + D1 + static frontend. TypeScript. No other
-vendors until the optional AI-summary milestone.
+Cloudflare Worker, TypeScript, Cloudflare's remote MCP server pattern with
+OAuth (workers-oauth-provider). Check Cloudflare's current docs and template
+rather than relying on memory. No other vendors.
 
-## Hard rules
-- Read-only Tastytrade scope. Secrets only in Cloudflare; never in the repo or
-  browser.
+## Security (non-negotiable)
+- Every MCP and debug route requires OAuth login via GitHub, restricted to an
+  allowlist containing only my GitHub username. Deny by default. No
+  unauthenticated route may return trade data, ever.
+- Read-only Tastytrade scope. Expose NO tool that can trade or change anything.
+- Secrets only in Cloudflare; never in the repo, logs, or tool output. Redact
+  account numbers in outputs (show last 4 only).
 - Sandbox vs production via one env variable. Sandbox REST: api.cert.tastyworks.com;
   production: api.tastyworks.com. Verify auth and endpoints against
-  developer.tastytrade.com before coding; do not rely on memory.
-- Store UTC, display America/Chicago, parse ISO 8601 only.
-- If P&L disagrees with Tastytrade's numbers, Tastytrade is right.
-- MEASURED (entry conditions, greeks, IV/IVR, excursion metrics, path vs strikes)
-  and CONTEXTUAL (macro, news; labeled hypotheses with sources) are always
-  separate. "No identifiable catalyst" is a valid output.
+  developer.tastytrade.com before coding.
+- Do not enable production credentials until I confirm the allowlist login works.
+
+## Tools to expose (read-only; concise, structured JSON; small default windows)
+- get_transactions(start, end): raw fills, normalized.
+- get_positions(): current open positions with marks.
+- get_spreads(start, end): transactions matched into spreads (vertical credit
+  spreads first; flag anything unmatched rather than guessing), with entry, exit,
+  exit type (manual/expired/assigned/auto-closed), fills, and realized P&L.
+- get_candles(symbol, interval, start, end): DXLink candles for underlyings and,
+  if available, option legs. Report gaps and actual vs requested range.
+- get_trade_context(spread_id): spread record + candles for the trade window for
+  the underlying, SPY, and VIX + computed metrics (max adverse/favorable
+  excursion in % and in expected moves, closest approach to short strike and
+  when, time of largest move).
+- get_chain_snapshot(symbol, expiration): current IV, greeks near strikes.
+Keep output sizes bounded and paginated so tool results don't flood context.
 
 ## Data notes
-- Underlying history: DXLink Candle events (e.g. SPY{=5m} plus fromTime).
-- Known trap: some libraries hardcode "contract": "AUTO" on the candle channel and
-  receive empty history. Use "contract": "HISTORY" for backfill.
-- DXLink publishes greeks only live; snapshots are the only source of greeks/IV
-  over time.
-- Archive each trade's candle window (underlying, SPY, VIX) in D1 at close.
+- Candles: DXLink Candle events (symbol like SPY{=5m} plus fromTime).
+- Known trap: some libraries hardcode "contract": "AUTO" on the candle channel
+  and get empty history. Use "contract": "HISTORY" for backfill.
+- DXLink publishes greeks only live. History of greeks/IV exists only if
+  snapshots are stored (see Milestone 3).
 - Free tier limits subrequests per invocation; batch, and flag if the paid plan
   is needed.
+- Store/return timestamps in UTC with explicit offsets; document America/Chicago
+  conversions. Parse ISO 8601 only.
+- If P&L disagrees with Tastytrade's own numbers, Tastytrade is right.
 
-## Reliability (top priority)
-Minimal bugs on Chrome, Edge, Safari (desktop + iPhone).
-- Boring, widely supported tech; one mature chart library.
-- Mobile-first; wide tables scroll in their own container; avoid 100vh.
-- Loading, empty, and error states on every screen.
-- Playwright (Chromium + WebKit, mobile viewport) in CI if feasible; otherwise
-  give me a short manual checklist per milestone.
-- Show trade counts on every aggregate slice; dim buckets under ~30 trades.
-
-## Screens
-1. Home: sync health, open trades, week/month P&L, recent-trade feed.
-2. Trade detail: candle chart with entry/exit markers and strike lines (SPY/VIX
-   toggles), measured section, context section, summary with confidence line,
-   my notes field.
-3. Insights: win rate and P&L by ticker, IVR bucket, DTE, time of day, day of
-   week, VIX regime, event-in-window; winners vs losers.
-4. Status: sync history, errors, sandbox/production indicator.
+## Analysis conventions (for the tool outputs, so Claude can follow them)
+- Keep MEASURED data (entry conditions, excursion metrics, path vs strikes,
+  greeks) clearly separate from CONTEXTUAL factors (macro, news), which Claude
+  adds via web search as labeled hypotheses with sources.
+- Every aggregate output includes trade counts; treat buckets under ~30 as hints.
 
 ## Milestones (in order; stop and report after each)
-0. /debug/candles endpoint that fetches underlying and option-leg candles for a
-   spread I specify, and prints what exists, depth, and gaps.
-1. Snapshot Worker (~5 min, market hours, Central) + D1 schema.
-2. Transaction sync and spread matching; I verify P&L against Tastytrade.
-3. Dashboard.
-4. AI summaries (Anthropic API + web search): entry setup, path, backdrop, exit,
-   confidence. Sources required; no causal claims that can't be time-aligned.
-Deferred: iPhone Home Screen install.
+0. Auth skeleton + /debug route + sandbox connectivity. Then the candle test:
+   fetch underlying and option-leg candles for a spread I specify and report
+   what exists, depth, and gaps.
+1. get_transactions, get_positions, get_spreads. I verify P&L against Tastytrade.
+2. get_candles, get_trade_context, get_chain_snapshot.
+3. Optional: D1 + cron snapshotting of open positions (greeks, IV, marks) and
+   archiving of candle windows at close, exposed via new tools.
+Deferred: any web frontend.
